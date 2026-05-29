@@ -1,0 +1,13 @@
+sentence-transformers
+faiss-cpu
+gradio
+groq
+pymongo[srv]
+pymupdf
+python-docx
+python-dotenv
+numpy
+passlib[bcrypt]
+python-jose[cryptography]
+email-validator
+bcrypt==4.0.1

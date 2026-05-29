@@ -1,0 +1,37 @@
+# Virtual environment
+.venv/
+venv/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Environment variables / secrets
+.env
+.env.*
+
+# Uploaded files and generated cache
+uploads/
+cache/
+.faiss_cache/
+*.faiss
+*.index
+*.pkl
+*.npy
+*.npz
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Logs
+*.log
+
+test_imports.py
+test_mongo.py
+hanoi_clean.txt
+app.py
