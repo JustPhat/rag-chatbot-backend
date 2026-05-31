@@ -67,3 +67,22 @@ JWT_ALGORITHM = os.getenv(
 ACCESS_TOKEN_EXPIRE_MINUTES = int(
     os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", 1440)
 )
+
+# =========================
+# Embedding model settings
+# =========================
+DEFAULT_EMBEDDING_MODEL = os.getenv(
+    "DEFAULT_EMBEDDING_MODEL",
+    "AITeamVN/Vietnamese_Embedding"
+)
+
+SUPPORTED_EMBEDDING_MODELS = {
+    "AITeamVN/Vietnamese_Embedding": {
+        "label": "AITeamVN Vietnamese Embedding",
+        "description": "Model embedding chính cho tiếng Việt."
+    },
+    "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2": {
+        "label": "Multilingual MiniLM",
+        "description": "Baseline nhẹ, đa ngôn ngữ, tốc độ nhanh hơn."
+    }
+}

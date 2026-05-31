@@ -137,7 +137,8 @@ def answer_question(
     index,
     top_k,
     conv_id,
-    user_id
+    user_id,
+    model_name=None
 ):
 
     retrieved = retrieve_chunks(
@@ -286,7 +287,8 @@ def retrieve_from_one_document(
     chunks,
     index,
     top_k,
-    file_name
+    file_name,
+    model_name=None
 ):
     """
     Retrieve top_k chunks từ một document.
@@ -297,7 +299,8 @@ def retrieve_from_one_document(
         question=question,
         chunks=chunks,
         index=index,
-        top_k=top_k
+        top_k=top_k,
+        model_name=model_name
     )
 
     sources = []
@@ -382,6 +385,8 @@ def answer_question_multi_documents(
             "index"
         )
 
+        model_name = doc_ctx.get("model_name")
+
         if not chunks or index is None:
             continue
 
@@ -390,7 +395,8 @@ def answer_question_multi_documents(
             chunks=chunks,
             index=index,
             top_k=top_k,
-            file_name=file_name
+            file_name=file_name,
+            model_name=model_name
         )
 
         all_sources.extend(

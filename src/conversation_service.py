@@ -240,3 +240,39 @@ def update_conversation_title(
     )
 
     return result.modified_count > 0
+
+def generate_unique_conversation_title(
+    user_id,
+    base_title
+):
+    existing_titles = set()
+
+    conversations = conversations_col.find(
+        {
+            "user_id": user_id,
+            "title": {
+                "$regex": f"^{base_title}"
+            }
+        },
+        {
+            "title": 1
+        }
+    )
+
+    for conv in conversations:
+        existing_titles.add(
+            conv.get("title")
+        )
+
+    if base_title not in existing_titles:
+        return base_title
+
+    counter = 1
+
+    while True:
+        new_title = f"{base_title} ({counter})"
+
+        if new_title not in existing_titles:
+            return new_title
+
+        counter += 1

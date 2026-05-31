@@ -13,7 +13,7 @@ from src.embedding import (
 from src.database import cache_col
 
 from src.config import (
-    EMBEDDING_MODEL_NAME,
+    DEFAULT_EMBEDDING_MODEL,
     SIMILARITY_THRESHOLD
 )
 
@@ -22,16 +22,13 @@ from src.config import (
 # File hash
 # =========================
 def compute_file_hash(file_path):
-
     sha256 = hashlib.sha256()
 
     with open(file_path, "rb") as f:
-
         for block in iter(
             lambda: f.read(1024 * 1024),
             b""
         ):
-
             sha256.update(block)
 
     return sha256.hexdigest()
@@ -45,10 +42,10 @@ def get_cache_key(
     embedding_model,
     file_hash
 ):
-
-    safe_model = embedding_model.replace(
-        "/",
-        "_"
+    safe_model = (
+        embedding_model
+        .replace("/", "_")
+        .replace(":", "_")
     )
 
     return (
@@ -62,8 +59,9 @@ def get_cache_key(
 # Serialize FAISS
 # =========================
 def serialize_faiss_index(index):
-
-    index_array = faiss.serialize_index(index)
+    index_array = faiss.serialize_index(
+        index
+    )
 
     return Binary(
         index_array.tobytes()
@@ -74,32 +72,42 @@ def serialize_faiss_index(index):
 # Deserialize FAISS
 # =========================
 def deserialize_faiss_index(index_binary):
-
     index_array = np.frombuffer(
         index_binary,
         dtype=np.uint8
     )
 
-    return faiss.deserialize_index(index_array)
+    return faiss.deserialize_index(
+        index_array
+    )
 
 
 # =========================
 # Build FAISS
 # =========================
-def build_faiss_index(chunks):
-
+def build_faiss_index(
+    chunks,
+    model_name: str = DEFAULT_EMBEDDING_MODEL
+):
     texts = [
         chunk["text"]
         for chunk in chunks
     ]
 
-    embeddings = encode_texts(texts)
+    embeddings = encode_texts(
+        texts,
+        model_name=model_name
+    )
 
     dim = embeddings.shape[1]
 
-    index = faiss.IndexFlatIP(dim)
+    index = faiss.IndexFlatIP(
+        dim
+    )
 
-    index.add(embeddings)
+    index.add(
+        embeddings
+    )
 
     return index
 
@@ -111,46 +119,50 @@ def save_document_cache(
     user_id,
     file_path,
     chunks,
-    faiss_index
+    faiss_index,
+    model_name: str = DEFAULT_EMBEDDING_MODEL
 ):
-
     file_hash = compute_file_hash(
         file_path
     )
 
     cache_key = get_cache_key(
         user_id,
-        EMBEDDING_MODEL_NAME,
+        model_name,
         file_hash
     )
 
     doc = {
-
         "cache_key": cache_key,
 
         "user_id": user_id,
 
-        "embedding_model":
-            EMBEDDING_MODEL_NAME,
+        # new standard field
+        "model_name": model_name,
 
-        "file_name":
-            os.path.basename(file_path),
+        # legacy-compatible field
+        "embedding_model": model_name,
 
-        "file_hash":
-            file_hash,
+        "file_name": os.path.basename(
+            file_path
+        ),
 
-        "chunks":
-            chunks,
+        "file_hash": file_hash,
 
-        "faiss_index_bytes":
-            serialize_faiss_index(
-                faiss_index
-            )
+        "chunks": chunks,
+
+        "faiss_index_bytes": serialize_faiss_index(
+            faiss_index
+        )
     }
 
     cache_col.update_one(
-        {"cache_key": cache_key},
-        {"$set": doc},
+        {
+            "cache_key": cache_key
+        },
+        {
+            "$set": doc
+        },
         upsert=True
     )
 
@@ -162,21 +174,47 @@ def save_document_cache(
 # =========================
 def load_document_cache(
     user_id,
-    file_path
+    file_path,
+    model_name: str = DEFAULT_EMBEDDING_MODEL
 ):
-
     file_hash = compute_file_hash(
         file_path
     )
 
     cache_key = get_cache_key(
         user_id,
-        EMBEDDING_MODEL_NAME,
+        model_name,
         file_hash
     )
 
     doc = cache_col.find_one(
-        {"cache_key": cache_key}
+        {
+            "cache_key": cache_key
+        }
+    )
+
+    if not doc:
+        return None, None, None
+
+    chunks = doc["chunks"]
+
+    index = deserialize_faiss_index(
+        doc["faiss_index_bytes"]
+    )
+
+    return doc, chunks, index
+
+
+# =========================
+# Load cache by cache_key
+# =========================
+def load_document_cache_by_key(
+    cache_key
+):
+    doc = cache_col.find_one(
+        {
+            "cache_key": cache_key
+        }
     )
 
     if not doc:
@@ -198,10 +236,15 @@ def retrieve_chunks(
     question,
     chunks,
     index,
-    top_k=5
+    top_k=5,
+    model_name: str = DEFAULT_EMBEDDING_MODEL
 ):
-
-    q_emb = encode_query(question)
+    if model_name is None:
+        model_name = DEFAULT_EMBEDDING_MODEL
+    q_emb = encode_query(
+        question,
+        model_name=model_name
+    )
 
     k = min(
         top_k,
@@ -220,7 +263,6 @@ def retrieve_chunks(
         distances[0],
         indices[0]
     ):
-
         if idx == -1:
             continue
 
@@ -235,22 +277,3 @@ def retrieve_chunks(
         )
 
     return retrieved
-# =========================
-# Load cache by cache_key
-# =========================
-def load_document_cache_by_key(cache_key):
-
-    doc = cache_col.find_one(
-        {"cache_key": cache_key}
-    )
-
-    if not doc:
-        return None, None, None
-
-    chunks = doc["chunks"]
-
-    index = deserialize_faiss_index(
-        doc["faiss_index_bytes"]
-    )
-
-    return doc, chunks, index
