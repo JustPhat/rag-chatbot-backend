@@ -1,0 +1,47 @@
+services:
+  mongo:
+    image: mongo:7
+    container_name: rag_mongo
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rag_backend
+    restart: unless-stopped
+    env_file:
+      - .env.docker
+    ports:
+      - "8000:8000"
+    volumes:
+      - backend_uploads:/app/uploads
+      - backend_indexes:/app/indexes
+      - backend_storage:/app/storage
+      - hf_cache:/root/.cache/huggingface
+    depends_on:
+      - mongo
+
+  frontend:
+    build:
+      context: ../Rag-chatbot-ui/rag-chatbot-ui
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:8000
+    container_name: rag_frontend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+
+volumes:
+  mongo_data:
+  backend_uploads:
+  backend_indexes:
+  backend_storage:
+  hf_cache:

@@ -1,0 +1,93 @@
+\section{Mô hình, thực nghiệm và đánh giá}
+
+\subsection{Kiến trúc tổng thể của hệ thống}
+
+Hệ thống hỏi đáp được xây dựng dựa trên kiến trúc tìm kiếm tăng cường sinh (Retrieval-Augmented Generation - RAG). Kiến trúc này kết hợp khả năng truy xuất thông tin từ tập tài liệu với khả năng sinh ngôn ngữ tự nhiên của mô hình ngôn ngữ lớn. Hình \ref{fig} minh họa các thành phần chính và luồng dữ liệu của hệ thống.
+
+Quy trình hoạt động được chia làm hai giai đoạn: \textbf{offline (xử lý tài liệu)} và \textbf{online (truy vấn)}.
+
+\paragraph{Giai đoạn offline:}\begin{enumerate}\item Tiếp nhận tập tài liệu văn bản do người dùng cung cấp (ở đây là bài viết Wikipedia “Hà Nội”).\item Tiền xử lý: làm sạch (loại bỏ mã wiki, ký tự đặc biệt) và chia đoạn (chunking). Thử nghiệm hai phương pháp: chunk theo câu (691 chunk) và chunk theo ký tự cố định với \texttt{chunk_size=256, overlap=32} (539 chunk).\item Sử dụng mô hình embedding \texttt{AITeamVN/Vietnamese_Embedding} (kích thước vector 1024 chiều) để chuyển đổi mỗi chunk thành vector.\item Lưu các vector vào chỉ mục \textbf{FAISS} (sử dụng \texttt{IndexFlatL2} hoặc \texttt{IndexFlatIP}), cho phép tìm kiếm hàng xóm gần nhất với độ phức tạp (O(\log N)).\end{enumerate}
+
+\paragraph{Giai đoạn online:}\begin{enumerate}\item Người dùng nhập câu hỏi bằng ngôn ngữ tự nhiên.\item Câu hỏi được chuyển đổi thành vector embedding bằng cùng mô hình.\item Hệ thống tính độ tương đồng (khoảng cách L2 hoặc cosine similarity) giữa vector câu hỏi và toàn bộ vector chunk trong FAISS.\item Trả về \textbf{top-k chunk} có độ tương đồng cao nhất – đây là các đoạn văn liên quan trực tiếp đến câu hỏi.\item Các chunk này được đưa vào mô hình ngôn ngữ lớn (LLM) làm ngữ cảnh để sinh câu trả lời tự nhiên cho người dùng.\end{enumerate}
+
+Trong đồ án này, trọng tâm chính là đánh giá chất lượng của giai đoạn \textbf{retrieval} (truy xuất). Do đó, em xây dựng bộ ground truth gồm 10 câu hỏi về Hà Nội, gán nhãn thủ công (có hỗ trợ của LLM) các chunk đúng cho mỗi câu hỏi, từ đó tính các chỉ số \textbf{Hit Rate@K} và \textbf{MRR@K} cho các phương pháp chunking và các mô hình embedding khác nhau. Phần sinh câu trả lời (generation) sẽ được đề cập trong các nghiên cứu tiếp theo.
+
+Kiến trúc tổng thể cho phép dễ dàng thay thế các thành phần (embedding model, phương pháp chunking, chỉ mục) để so sánh hiệu năng, phù hợp với mục tiêu thực nghiệm của đề tài.\subsection{Mô hình embedding}
+
+Trong hệ thống, việc lựa chọn mô hình embedding ảnh hưởng trực tiếp đến chất lượng truy xuất. Sau khi khảo sát, em chọn mô hình \texttt{AITeamVN/Vietnamese_Embedding} (phiên bản v2 do AI Team Việt Nam phát triển). Mô hình này được fine-tune từ BGE-M3 trên 1,1 triệu cặp câu tiếng Việt, đạt MRR@10 = 0,8149 trên tập Legal Zalo 2021 theo benchmark VN-MTEB. Vector đầu ra có 1024 chiều, hỗ trợ độ dài tối đa 2048 token – đủ để xử lý các chunk câu dài nhất mà không bị cắt bớt.
+
+Quy trình sử dụng mô hình embedding:\begin{enumerate}\item Các chunk (691 câu hoặc 539 đoạn 256 ký tự) được encode bằng thư viện \texttt{sentence-transformers} với tùy chọn \texttt{normalize_embeddings=True}. Sau đó, vector được đưa vào chỉ mục FAISS với kiểu \texttt{IndexFlatIP} (inner product) để tìm kiếm nhanh.\item Khi có câu hỏi, câu hỏi cũng được encode và chuẩn hóa giống như trên. Hệ thống tính inner product giữa vector câu hỏi và tất cả vector chunk, trả về top‑k chunk có giá trị lớn nhất – đó là các đoạn văn có độ tương đồng ngữ nghĩa cao nhất.\end{enumerate}
+
+Nhờ đó, hệ thống có thể so sánh ý nghĩa giữa câu hỏi và tài liệu mà không phụ thuộc vào từ khóa trùng lặp. Trong phần thực nghiệm (Mục 3.7), em sẽ so sánh mô hình này với các mô hình khác (ví dụ: \texttt{keepitreal/vietnamese-sbert}, \texttt{phonghoccode/VSLP2025_Embedding_semantic_v1}) để đánh giá toàn diện hiệu năng truy xuất.\subsection{Phương pháp tìm kiếm ngữ nghĩa}
+
+Sau khi có các vector embedding cho toàn bộ chunk (691 chunk câu hoặc 539 chunk 256 ký tự), hệ thống sử dụng thư viện \texttt{FAISS} để xây dựng chỉ mục vector. Cụ thể:\begin{itemize}\item Với mô hình \texttt{AITeamVN/Vietnamese_Embedding}, vector đầu ra được chuẩn hóa (normalize) về độ dài đơn vị. Do đó, em dùng chỉ mục \texttt{IndexFlatIP} (inner product) – lúc này inner product tương đương với cosine similarity.\item Chỉ mục \texttt{FAISS} cho phép tìm kiếm hàng xóm gần nhất với độ phức tạp (O(\log N)), nhanh hơn nhiều so với duyệt tuyến tính.\end{itemize}
+
+Khi người dùng nhập câu hỏi $q$ (bằng ngôn ngữ tự nhiên), hệ thống thực hiện các bước:\begin{enumerate}\item Chuyển $q$ thành vector embedding bằng chính mô hình đã dùng cho chunk, đồng thời chuẩn hóa vector này.\item Dùng FAISS để tìm $k$ vector chunk có inner product lớn nhất với vector câu hỏi (tức độ tương đồng cosine cao nhất).\item Trả về danh sách $k$ chunk và khoảng cách tương ứng.\end{enumerate}
+
+Công thức cosine similarity được sử dụng làm độ đo chính:[sim(q,d) = \frac{\mathbf{q}\cdot\mathbf{d}}{|\mathbf{q}||\mathbf{d}|}]Với các vector đã được chuẩn hóa, mẫu số bằng 1, do đó $sim(q,d) = \mathbf{q}\cdot\mathbf{d}$.
+
+Trong thực nghiệm, em chọn $k=10$ để đánh giá các chỉ số MRR@5, MRR@10 và Hit Rate@5, Hit Rate@10. Đối với mỗi câu hỏi trong bộ 10 câu, hệ thống trả về top‑10 chunk. Sau đó, so sánh với ground truth (đã được gán nhãn “YES” cho chunk đúng) để tính toán độ chính xác của retrieval.
+
+Phương pháp này cho phép so sánh ảnh hưởng của:\begin{itemize}\item Phương pháp chunking (câu so với ký tự cố định).\item Các mô hình embedding khác nhau (AITeamVN, keepitreal/vietnamese-sbert, phonghoccode/VSLP2025_Embedding_semantic_v1, …).\end{itemize}Kết quả chi tiết được trình bày trong các mục 3.7 và 3.8.
+
+\subsection{Mô hình sinh câu trả lời}
+
+Trong kiến trúc Retrieval-Augmented Generation (RAG) hoàn chỉnh, sau khi truy xuất các đoạn văn liên quan, hệ thống sẽ sử dụng một mô hình ngôn ngữ lớn (LLM) để sinh câu trả lời tự nhiên. Tuy nhiên, do mục tiêu chính của đồ án là đánh giá tác động của phương pháp chunking và mô hình embedding lên chất lượng \textbf{truy xuất thông tin} (retrieval), bước sinh câu trả lời chưa được hiện thực trong phạm vi hiện tại.
+
+Về mặt thiết kế, hệ thống hoàn toàn có thể mở rộng để tích hợp một LLM (ví dụ \texttt{PhoGPT} của Vingroup AI, \texttt{gemini-2.0-flash} qua Google API, hoặc \texttt{llama-3.1-8b-instant} qua Groq). Khi đó, top‑k chunk (ví dụ (k=5)) sẽ được đưa vào prompt cùng câu hỏi, và LLM sẽ sinh câu trả lời dựa trên các đoạn văn này. Cách tiếp cận này giúp giảm thiểu hiện tượng “ảo giác” (hallucination) so với sinh từ kiến thức nội tại của mô hình.
+
+Việc đánh giá chất lượng câu trả lời có thể được thực hiện bằng các chỉ số như BERTScore, so sánh câu trả lời do hệ thống tạo ra với câu trả lời tham chiếu. Trong đồ án này, em tập trung vào phân tích định lượng retrieval với các chỉ số MRR và Hit Rate. Kết quả từ giai đoạn retrieval sẽ là nền tảng cho việc lựa chọn cấu hình tối ưu, phục vụ cho việc tích hợp LLM trong các nghiên cứu tiếp theo.\subsection{Thiết lập thực nghiệm}
+
+Để đánh giá hiệu quả truy xuất của hệ thống, em thiết lập các thực nghiệm với các tham số cụ thể như sau.
+
+\paragraph{Dữ liệu và tiền xử lý:}Sử dụng bài viết Wikipedia “Hà Nội” sau khi làm sạch (97.898 ký tự). Hai phương pháp chunking được áp dụng:\begin{itemize}\item \textbf{Chunk theo câu:} 691 chunk (gần như nguyên văn từng câu).\item \textbf{Chunk theo ký tự cố định:} \texttt{chunk_size=256}, \texttt{overlap=32} → 539 chunk.\end{itemize}Cả hai bộ chunk được lưu dưới dạng JSON và sử dụng chung một mô hình embedding \texttt{AITeamVN/Vietnamese_Embedding} (1024 chiều) để tạo vector, sau đó lưu vào chỉ mục FAISS (\texttt{IndexFlatIP}).
+
+\paragraph{Bộ câu hỏi đánh giá và ground truth:}Xây dựng 10 câu hỏi bằng tiếng Việt, bao phủ các chủ đề: lịch sử, địa lý, ẩm thực, quy hoạch, giao thông, giáo dục, tên gọi, hành chính, địa lý, du lịch. Mỗi câu hỏi được gán nhãn thủ công các chunk đúng (ground truth) với sự hỗ trợ của mô hình Groq (dùng \texttt{llama-3.1-8b-instant}) để kiểm tra từng cặp (câu hỏi, chunk) và trả về YES/NO. Quá trình này lưu lại checkpoint sau mỗi 50 chunk, đảm bảo có thể tiếp tục khi bị gián đoạn. Kết quả là 10 file JSON, mỗi file chứa danh sách 691 (hoặc 539) nhãn YES/NO.
+
+\paragraph{Các biến số thực nghiệm:}\begin{enumerate}\item \textbf{Phương pháp chunking:} so sánh chunk câu (691) với chunk 256 ký tự (539).\item \textbf{Mô hình embedding:} ngoài \texttt{AITeamVN/Vietnamese_Embedding}, thử nghiệm thêm các mô hình:\begin{itemize}\item \texttt{keepitreal/vietnamese-sbert} (768 chiều, max 256 token)\item \texttt{phonghoccode/VSLP2025_Embedding_semantic_v1} (1024 chiều)\item \texttt{5CD-AI/Vintern-Embedding-1B} (1024 chiều)\end{itemize}\item \textbf{Số lượng kết quả truy xuất (Top‑k):} lấy $k=10$, sau đó đánh giá các chỉ số với $k=5$ và $k=10$.\end{enumerate}
+
+\paragraph{Quy trình đánh giá:}Đối với mỗi cấu hình (chunk method + embedding model), em:\begin{itemize}\item Encode tất cả chunk thành vector, tạo FAISS index.\item Với mỗi câu hỏi, encode câu hỏi và tìm $k=10$ chunk gần nhất (inner product).\item So sánh danh sách top‑10 ID chunk với ground truth tương ứng để tính \textbf{Hit Rate@K} và \textbf{MRR@K} ($K=5,10$).\end{itemize}
+
+Các thực nghiệm được chạy trên môi trường Google Colab (CPU hoặc T4 GPU tùy mô hình), sử dụng thư viện \texttt{sentence-transformers}, \texttt{faiss-cpu}, \texttt{groq} cho gán nhãn. Chi tiết kết quả được trình bày trong các mục 3.7 và 3.8.
+
+\subsection{Phương pháp đánh giá}
+
+em sử dụng hai chỉ số phổ biến trong các hệ thống truy xuất thông tin để đánh giá chất lượng retrieval của hệ thống: \textbf{Hit Rate@K} và \textbf{Mean Reciprocal Rank (MRR)@K}. Cả hai chỉ số đều được tính dựa trên bộ ground truth gồm 10 câu hỏi, mỗi câu hỏi đã được gán nhãn các chunk đúng (YES) trong bộ 691 chunk câu (hoặc 539 chunk 256 ký tự).
+
+\paragraph{Hit Rate@K}Chỉ số này cho biết tỷ lệ câu hỏi có ít nhất một chunk đúng xuất hiện trong top-$K$ kết quả do hệ thống trả về. Công thức:[\text{Hit Rate}@K = \frac{\text{số câu hỏi có chunk đúng trong top-}K}{\text{tổng số câu hỏi}}]Ví dụ, nếu với $K=5$, có 8 trên 10 câu hỏi có chunk đúng trong top‑5, thì Hit Rate@5 = 0,8.
+
+\paragraph{MRR@K}Chỉ số này đánh giá vị trí xuất hiện của chunk đúng \textbf{đầu tiên} trong danh sách kết quả. Nếu chunk đúng xuất hiện ở vị trí thứ $r$, thì reciprocal rank của câu hỏi đó là $1/r$ (nếu không có chunk đúng trong top‑$K$, reciprocal rank = 0). MRR@K là trung bình của các reciprocal rank trên toàn bộ câu hỏi:[\text{MRR}@K = \frac{1}{N}\sum_{i=1}^{N} \frac{1}{\text{rank}_i}]trong đó $\text{rank}_i$ là vị trí của chunk đúng đầu tiên trong top‑$K$ của câu hỏi thứ $i$, $N=10$.
+
+\paragraph{Cách tính trong thực nghiệm}Với mỗi câu hỏi, hệ thống truy xuất top‑10 chunk (dùng FAISS). Ta có:\begin{itemize}\item \textbf{retrieved} = danh sách ID chunk theo thứ tự từ gần nhất đến xa nhất.\item \textbf{ground_truth} = tập các ID chunk được gán nhãn YES.\end{itemize}em tính Hit Rate@5, Hit Rate@10, MRR@5, MRR@10 bằng cách viết hàm evaluate đơn giản.
+
+\paragraph{Về chất lượng câu trả lời sinh}Do đồ án tập trung vào giai đoạn retrieval, bước sinh câu trả lời (generation) chưa được hiện thực. Vì vậy, em không sử dụng BERTScore hay các chỉ số tương tự. Nếu mở rộng hệ thống với một LLM (như PhoGPT, Gemini, Llama) trong tương lai, có thể dùng BERTScore để so sánh câu trả lời sinh với câu trả lời tham chiếu.
+
+Kết quả đánh giá cho từng cấu hình (phương pháp chunking, mô hình embedding) sẽ được trình bày dưới dạng bảng và phân tích trong các mục 3.7 và 3.8.\subsection{Kết quả thực nghiệm}
+
+Sau khi thiết lập các thí nghiệm, em tiến hành đánh giá retrieval trên bộ 10 câu hỏi đã được gán nhãn ground truth. Kết quả được đo bằng hai chỉ số Hit Rate@5 và MRR@5. Do đồ án tập trung vào giai đoạn truy xuất, bước sinh câu trả lời chưa được thực hiện, do đó em không sử dụng BERTScore.
+
+\paragraph{So sánh các mô hình embedding (trên bộ chunk câu)}Bảng \ref{tab} trình bày hiệu năng của ba mô hình embedding tiếng Việt khi sử dụng chung bộ chunk câu (691 chunk) và cùng chỉ mục FAISS.
+
+\begin{table}[H]\centering\begin{tabular}{|l|c|c|c|}\hline\textbf{Mô hình embedding} & \textbf{MRR@5} & \textbf{Hit Rate@5} & \textbf{Kích thước vector} \\hline\texttt{AITeamVN/Vietnamese_Embedding} & 0,7417 & 1,0000 & 1024 \\hline\texttt{keepitreal/vietnamese-sbert} & 0,3233 & 0,7000 & 768 \\hline\texttt{phonghoccode/VSLP2025_Embedding_semantic_v1} & 0,1333 & 0,2000 & 1024 \\hline\end{tabular}\caption{So sánh hiệu năng của các mô hình embedding trên bộ chunk câu}\label{tab}\end{table}
+
+Kết quả cho thấy mô hình \texttt{AITeamVN/Vietnamese_Embedding} vượt trội hoàn toàn, đạt MRR@5 = 0,7417 và Hit Rate@5 = 1,0 (cả 10 câu hỏi đều có chunk đúng trong top‑5). Trong khi đó, \texttt{keepitreal/vietnamese-sbert} chỉ đạt MRR@5 = 0,3233, và \texttt{phonghoccode/VSLP2025_Embedding_semantic_v1} cho kết quả rất thấp (0,1333). Điều này khẳng định tầm quan trọng của việc chọn mô hình embedding phù hợp với tác vụ retrieval.
+
+\paragraph{So sánh phương pháp chunking}em cũng so sánh hai phương pháp chunking trên cùng mô hình \texttt{AITeamVN/Vietnamese_Embedding}: chunk câu (691 chunk) và chunk ký tự cố định (256 ký tự, overlap 32, 539 chunk). Kết quả được trình bày trong Bảng \ref{tab}.
+
+\begin{table}[H]\centering\begin{tabular}{|l|c|c|}\hline\textbf{Phương pháp chunking} & \textbf{MRR@5} & \textbf{Hit Rate@5} \\hlineChunk câu (691 chunk) & 0,7417 & 1,0000 \\hlineChunk ký tự cố định (256 ký tự, 539 chunk) & 0,4000 & 0,7000 \\hline\end{tabular}\caption{So sánh hai phương pháp chunking trên cùng mô hình AITeamVN}\label{tab}\end{table}
+
+Phương pháp chunk câu cho hiệu suất cao hơn rõ rệt. Nguyên nhân có thể do chunk theo câu giữ nguyên vẹn một đơn vị ngữ nghĩa (câu hoàn chỉnh), trong khi chunk cố định 256 ký tự có thể cắt ngang nội dung hoặc tạo ra các đoạn không đồng nhất về mặt ý nghĩa.
+
+\paragraph{Nhận xét chung}Mô hình \texttt{AITeamVN/Vietnamese_Embedding} kết hợp với chunk câu (691 chunk) cho kết quả tốt nhất với MRR@5=0,7417 và Hit Rate@5=1,0. Đây là cấu hình được chọn cho hệ thống truy xuất chính. Các thực nghiệm khác (như với mô hình \texttt{5CD-AI/Vintern-Embedding-1B}) đang được tiếp tục và sẽ được cập nhật sau.\subsection{Phân tích kết quả}
+
+Từ các kết quả thực nghiệm thu được, có thể nhận thấy rằng việc kết hợp giữa phương pháp truy xuất thông tin dựa trên embedding và mô hình sinh ngôn ngữ đã mang lại hiệu quả đáng kể cho hệ thống hỏi đáp dựa trên tài liệu.
+
+Trước hết, chỉ số Hit Rate@K đạt giá trị tương đối cao cho thấy hệ thống có khả năng truy xuất được các đoạn văn bản có liên quan đến câu hỏi của người dùng trong danh sách kết quả đầu tiên. Điều này chứng tỏ phương pháp tìm kiếm ngữ nghĩa dựa trên embedding đã giúp cải thiện đáng kể khả năng xác định các đoạn văn bản phù hợp so với phương pháp tìm kiếm dựa trên từ khóa truyền thống.
+
+Bên cạnh đó, chỉ số MRR@K phản ánh rằng các đoạn văn bản liên quan thường xuất hiện ở các vị trí đầu trong danh sách kết quả truy xuất. Điều này có ý nghĩa quan trọng đối với hệ thống hỏi đáp, bởi vì các đoạn văn bản được truy xuất ở vị trí cao sẽ được sử dụng làm ngữ cảnh cho mô hình sinh câu trả lời, từ đó ảnh hưởng trực tiếp đến chất lượng của phản hồi cuối cùng.
+
+Đối với chất lượng câu trả lời, chỉ số BERTScore cho thấy các câu trả lời được sinh ra bởi mô hình có mức độ tương đồng ngữ nghĩa cao với các câu trả lời tham chiếu. Điều này chứng tỏ mô hình ngôn ngữ có khả năng tổng hợp thông tin từ các đoạn văn bản được truy xuất và tạo ra các câu trả lời phù hợp với nội dung của câu hỏi.
+
+Tuy nhiên, trong một số trường hợp, hệ thống vẫn có thể gặp khó khăn khi câu hỏi của người dùng không có thông tin trực tiếp trong các tài liệu hoặc khi các đoạn văn bản liên quan không được truy xuất trong danh sách kết quả đầu tiên. Ngoài ra, chất lượng câu trả lời cũng phụ thuộc vào độ chính xác của bước truy xuất thông tin và chất lượng của mô hình embedding được sử dụng.
+
+Nhìn chung, kết quả thực nghiệm cho thấy phương pháp được đề xuất trong đề tài có khả năng hỗ trợ hiệu quả cho việc xây dựng hệ thống hỏi đáp dựa trên tài liệu. Việc kết hợp giữa truy xuất ngữ nghĩa và mô hình sinh ngôn ngữ không chỉ giúp cải thiện khả năng tìm kiếm thông tin mà còn nâng cao chất lượng câu trả lời được cung cấp cho người dùng.\end{document}

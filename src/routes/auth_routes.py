@@ -1,5 +1,6 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 
+from src.dependencies.auth_dependency import get_current_user
 from src.schemas.auth_schema import (
     RegisterRequest,
     LoginRequest
@@ -83,4 +84,14 @@ def login(
         "user_id": user["_id"],
         "email": user["email"],
         "full_name": user.get("full_name")
+    }
+
+@router.get("/me")
+async def get_me(
+    current_user: dict = Depends(get_current_user)
+):
+    return {
+        "user_id": current_user["_id"],
+        "email": current_user.get("email"),
+        "full_name": current_user.get("full_name"),
     }
